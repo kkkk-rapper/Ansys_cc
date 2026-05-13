@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# AEDT 残留
+*.aedt.lock
+*.aedtresults/
+*.pyaedt/
+*.lock.aedt
+*.aedt.bak.??.aedt
+
+# 输出(应该按运行生成,不入 git)
+data_out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

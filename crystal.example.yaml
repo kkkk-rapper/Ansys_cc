@@ -1,0 +1,32 @@
+# crystal.yaml --- 描述一块物理晶体的本征参数(物理属性,与 STEP 一对一绑定)
+#
+# 默认查找路径: 与 STEP 文件同目录同名
+#   detector_A.step  →  detector_A.yaml
+# 可通过 CLI 覆盖: --crystal /other/path/foo.yaml
+#
+# 一旦晶体物理实体确定, 这份文件就该装一次定终身。换工作电压去改
+# operating.yaml, 不要改这份。
+
+physics:
+  # 载流子类型:决定空间电荷密度 ρ 的符号
+  #   p-type (净受主)  →  ρ < 0
+  #   n-type (净施主)  →  ρ > 0
+  carrier_type: p-type
+
+  # 杂质浓度 (单位: cm⁻³)。
+  # 永远填**正数**,符号由上方 carrier_type 自动注入。
+  # 体内 ρ 按这两个端面值做线性插值,梯度方向由几何自动识别:
+  #   PPlus_end    = P+ 触面端 (默认 = 高浓度端, 见 README §2.2 算法)
+  #   opposite_end = 对面端
+  impurity_concentration:
+    PPlus_end:    2.0e10
+    opposite_end: 1.0e10
+
+  # 操作温度 (K),目前仅记录在 manifest 用于追溯,不参与计算。
+  # 未来若引入温度相关的 Ge 介电常数修正,会用到这个值。
+  temperature: 77
+
+material:
+  # AEDT 材料库中的晶体本体材料名。默认 Germanium (ε_r = 16.0)。
+  # PPlus_*/NPlus_* 在脚本里强制设为 PEC,不在此处配置。
+  crystal: Germanium
