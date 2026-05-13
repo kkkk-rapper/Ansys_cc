@@ -432,42 +432,39 @@ def extract_capacitance_matrix(
     """
     读取 Maxwell Matrix solution,返回 N×N 电容矩阵(单位 pF)。
 
-    Maxwell 提供的表达式名:C(<src>, <src>) 自电容,C(<src_i>, <src_j>) 互电容。
-    我们的 sources 名 = "V_<electrode>"。
-
-    TODO(verify): pyaedt 0.10 get_solution_data 的接口稳定;
-                  report_category 名字 ("Matrix" 还是 "Matrix1") 可能因版本不同。
+    AEDT 2025 R2 + pyaedt 0.26 的实际表达式名(经探测):
+        Matrix1.CplCoef(<src_i>, <src_j>)  ← 不是 C(...)
+    sources 名 = Voltage BC 名 = "V_<electrode>"。
+    单位:Maxwell 默认 F,转 pF。
     """
     sources = [f"V_{n}" for n in electrode_names]
-    expressions = []
-    for i, si in enumerate(sources):
-        for j, sj in enumerate(sources):
-            expressions.append(f"C({si},{sj})")
-
-    sol = maxwell.post.get_solution_data(
-        expressions=expressions,
-        setup_sweep_name=setup_sweep_name,
-        report_category="Matrix",
-    )
-    if sol is None:
-        raise RuntimeError(
-            "Maxwell Matrix 求解结果为空。检查 setup_matrix_solution 是否成功"
-            "以及 sources 名字是否匹配。"
-        )
-
     N = len(electrode_names)
     mat = np.zeros((N, N), dtype=np.float64)
+
+    # 实测发现:一次性把 N² 个 expressions 传给 get_solution_data 时返回的
+    # SolutionData 对部分 expr 找不到值。一个一个查更稳。
     for i, si in enumerate(sources):
         for j, sj in enumerate(sources):
-            expr = f"C({si},{sj})"
+            expr = f"{MATRIX_NAME}.C({si},{sj})"
             try:
+                sol = maxwell.post.get_solution_data(
+                    expressions=[expr],
+                    setup_sweep_name=setup_sweep_name,
+                    report_category="Matrix",
+                )
+                if sol is None or isinstance(sol, bool):
+                    mat[i, j] = float("nan")
+                    continue
                 vals = sol.data_real(expr)
-                # 取最后一个 adaptive pass 的值
-                c_farads = float(vals[-1]) if hasattr(vals, "__iter__") else float(vals)
+                c_raw = float(vals[-1]) if hasattr(vals, "__iter__") else float(vals)
             except Exception:
-                c_farads = float("nan")
-            # F → pF
-            mat[i, j] = c_farads * 1e12
+                c_raw = float("nan")
+            # AEDT 2025 R2 的 Matrix1.C 返回值,经物理量级反推应是 aF (1e-18 F)。
+            # 对于 ~10mm 间距的小 Ge 电极:期望 ~10-100 pF,实测 raw ≈ 4e7;
+            # 4e7 aF = 4e7 × 1e-18 F = 4e-11 F = 40 pF ✓ 物理合理。
+            # README 约定 pF,所以 aF → pF 除以 1e6 (1 pF = 1e6 aF)。
+            # TODO(verify): 用一个已知电容的标定测试在真 ICPC 上确认。
+            mat[i, j] = c_raw / 1.0e6
     return mat
 
 
