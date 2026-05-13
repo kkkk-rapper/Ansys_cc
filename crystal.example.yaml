@@ -19,8 +19,8 @@ physics:
   #   PPlus_end    = P+ 触面端 (默认 = 高浓度端, 见 README §2.2 算法)
   #   opposite_end = 对面端
   impurity_concentration:
-    PPlus_end:    2.0e10
-    opposite_end: 1.0e10
+    PPlus_end:    2.0e+10
+    opposite_end: 1.0e+10
 
   # 操作温度 (K),目前仅记录在 manifest 用于追溯,不参与计算。
   # 未来若引入温度相关的 Ge 介电常数修正,会用到这个值。
