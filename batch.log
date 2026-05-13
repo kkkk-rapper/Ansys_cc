@@ -1,0 +1,14 @@
+ 
+Ansys Electronics Desktop Version 2025.2.0, Build: 2025-05-16 12:03:40
+Location: D:\ANSYS2025\ANSYS Inc\v252\AnsysEM\ansysedt.exe
+Non Graphical Mode: No Project??
+Starting Batch Run: 12:30:08 AM  May 08, 2026
+Running as user : DESKTOP-A4OURPO\hlh
+Temp directory: D:\Temp
+Project directory: C:\Users\hlh\Documents\Ansoft
+-- Message Window --
+      *Global - Messages
+        [info] GRPC server running on port: 63370. 
+        [error] Script macro error: 'C:/Users/hlh/Desktop/Ansys/ICPC.aedt' was created with ACIS geometry kernel. It cannot be accessed by Electronics Desktop version 2025R1 and beyond. Please use 2024R2 version to translate into Parasolid.
+-- Message Window --
+Stopping Batch Run: 12:30:26 AM  May 08, 2026
