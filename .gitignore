@@ -12,6 +12,10 @@ venv/
 *.pyaedt/
 *.lock.aedt
 *.aedt.bak.??.aedt
+batch.log
+
+# 探测/调试脚本
+_*.py
 
 # 输出(应该按运行生成,不入 git)
 data_out/

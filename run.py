@@ -198,8 +198,8 @@ def preflight_validate(args, log: logging.Logger) -> tuple[CrystalSpec, Operatin
                 f"加 --force 覆盖,或加 --resume 从断点续跑。"
             )
 
-    # 5. 项目文件路径
-    project_path = run_dir / f"{args.step.stem}.aedt"
+    # 5. 项目文件路径(绝对路径!AEDT 否则会把相对路径解析到 ~/Documents/Ansoft/)
+    project_path = (run_dir / f"{args.step.stem}.aedt").resolve()
 
     # 6. 磁盘空间(粗估;真实 grid_shape 要等 AEDT 拿 bbox 后才知)
     #    这里跳过精确检查,只在 AEDT 启动后再做一次。
@@ -248,6 +248,13 @@ def install_signal_handler() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     global _current_manifest, _current_manifest_path, _current_desktop
+
+    # Windows 默认 GBK 控制台编码遇到 Unicode 字符(如 mm^3 的 ³)会崩
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
     args = build_parser().parse_args(argv)
     log = setup_logging(args.log_level, run_dir=None)
@@ -312,14 +319,20 @@ def main(argv: list[str] | None = None) -> int:
         # 导入 STEP
         log.info(f"导入 STEP: {args.step}")
         all_obj_names = aedt_ops.import_step(maxwell_real, args.step.resolve())
-        log.info(f"导入完成,objects = {all_obj_names}")
+        log.info(f"导入完成,raw objects = {all_obj_names}")
+
+        # AEDT 可能没保留 STEP PRODUCT 名,用体积启发式重命名
+        all_obj_names = aedt_ops.rename_bodies_by_heuristic(
+            maxwell_real, log_fn=log.info
+        )
+        log.info(f"重命名后 objects = {all_obj_names}")
 
         # 拓扑识别
         log.info("拓扑识别中...")
         geom = detect_geometry(maxwell_real)
         electrode_names = geom.pplus_names + geom.nplus_names
         log.info(
-            f"Crystal vol = {geom.crystal_volume_mm3:.1f} mm³, "
+            f"Crystal vol = {geom.crystal_volume_mm3:.1f} mm^3, "
             f"electrodes = {electrode_names}"
         )
         log.info(f"P+ 端面质心 = {geom.pplus_face_centroid_mm.tolist()} mm")
