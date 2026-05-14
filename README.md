@@ -55,11 +55,11 @@ SolidWorks 装配体(STEP AP242) + crystal.yaml + operating.yaml
 
 ## 2. 输入规范
 
-### 2.1 SolidWorks 装配体 → STEP AP242
+### 2.1 SolidWorks 装配体 → STEP
 
-**格式:** STEP AP242 (ISO 10303-242),扩展名 `.step` 或 `.stp`。
+**格式:** STEP AP203 / AP214 / AP242 均可,扩展名 `.step` 或 `.stp`(实测 SolidWorks 2024 默认导出 AP203,工作正常)。
 
-**零件命名约定**(在 SolidWorks 里命名,STEP 会保留 `PRODUCT` 名):
+**零件命名约定**(在 SolidWorks 里命名,STEP 文件的 `PRODUCT` 段保留):
 
 | 角色 | 零件名 pattern | 数量 |
 |---|---|---|
@@ -73,14 +73,25 @@ SolidWorks 装配体(STEP AP242) + crystal.yaml + operating.yaml
 - 单电极示例:`Crystal`、`PPlus_01`、`NPlus_01`
 - 多电极示例:`Crystal`、`PPlus_01`、`NPlus_01`、`NPlus_02`、… 、`NPlus_36`
 
-**自动校验**(导入后立即执行,任一失败 abort):
+**实现细节:AEDT 导入会扔掉 STEP 的 PRODUCT 名**(实测 pyaedt 0.26 + AEDT 2025 R2 的 `import_3d_cad` 行为,所有 import 选项都不救)。脚本 workaround:
 
-1. 存在且只有一个 `Crystal`
-2. 至少一个 `PPlus_*` 和一个 `NPlus_*`,均匹配 `_NN` 两位编号 pattern
-3. 每个电极与 Crystal 有面接触(共享面)
-4. Crystal 是所有零件中体积最大者
-5. 零件名为 ASCII,无非法字符
-6. STEP 文件可被 AEDT 成功导入
+1. 直接解析 STEP 文本(`step_parser.py`)抽出所有 PRODUCT 名,过滤到 Crystal/PPlus_NN/NPlus_NN
+2. 导入到 AEDT 后,按 body **体积排序** 把 AEDT 自动名(`ttpkp_attribute<N>`)映射回 STEP 真名:
+   - 体积最大 → `Crystal`
+   - 剩余按体积升序:小的归 `PPlus_*`,大的归 `NPlus_*`
+   - 同类内部按 STEP 文件里出现顺序赋编号
+3. **歧义保护**:
+   - 多个 P+ 体积差 < 5% → abort(无法编号)
+   - max P+ 体积 > 0.5 × min N+ 体积 → abort(P+/N+ 区分不可靠)
+
+这意味着**单 P+ + 单 N+**(典型 ICPC)总是无歧义工作;**多对称 N+ 分段**当前会 abort,等真几何匹配实现。
+
+**自动校验:**
+
+1. STEP 文件里存在唯一 `Crystal` PRODUCT
+2. STEP 文件里至少有一个 `PPlus_NN` 和一个 `NPlus_NN`
+3. AEDT 导入后 body 数 == STEP 叶子 PRODUCT 数
+4. 体积启发式无歧义
 
 ### 2.2 crystal.yaml(物理参数,绑定晶体)
 

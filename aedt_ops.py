@@ -133,35 +133,70 @@ def import_step(maxwell, step_path: Path) -> list[str]:
     return list(maxwell.modeler.object_names)
 
 
-def rename_bodies_by_heuristic(
-    maxwell, log_fn=print
+def match_step_names_to_bodies(
+    maxwell, step_path: Path, log_fn=print
 ) -> list[str]:
     """
-    STEP 导入后 AEDT 把零件名扔了,用体积启发式重命名:
-      - 体积最大 → Crystal
-      - 剩余中最小 → PPlus_01(点电极)
-      - 剩余中其它 → NPlus_NN(按体积升序编号)
+    AEDT import_3d_cad 不保留 STEP 的 PRODUCT 名(已确认是 AEDT 行为,无 import
+    选项可救)。这个函数做替代:
 
-    仅在 ICPC 型 1 个 P+ + N 个 N+ 时正确;多 P+ 时这个启发式不可用,
-    需要手动指定或恢复 STEP 名字。
+    1. 从 STEP 文本解析所有 PRODUCT 名,过滤到合法叶子名(Crystal/PPlus_NN/NPlus_NN)
+    2. 校验数量:AEDT body 数 == STEP 叶子 PRODUCT 数
+    3. 按"体积单调"启发式匹配:
+       - 体积最大 AEDT body → Crystal
+       - 剩余按体积升序:小的归 PPlus_*,大的归 NPlus_*
+       - 编号按 STEP 里出现顺序(PPlus_01, PPlus_02, ...)
+    4. 歧义 abort(例:多个 P+ 体积差 < 5% 时无法区分编号)
 
-    返回重命名后的 object 名列表(已按 Crystal / PPlus_* / NPlus_* 排序)。
+    这样名字真正来自 STEP(等于你 SolidWorks 里命的名),只是匹配靠体积。
+    对单 P+ + 单 N+ 的 ICPC 总是无歧义;多电极对称分段需要后续真几何匹配。
+
+    返回重命名后的 object 名列表。
     """
+    from step_parser import extract_product_geometry, filter_leaf_products
+
     obj_names = list(maxwell.modeler.object_names)
     if not obj_names:
         raise RuntimeError("STEP 导入后没有 body")
 
-    # 已经命名正确就不动
+    # ── 已被保留名字的情况(未来 AEDT 修了这个 bug)
     already_ok = (
         "Crystal" in obj_names
         and any(n.startswith("PPlus_") for n in obj_names)
         and any(n.startswith("NPlus_") for n in obj_names)
     )
     if already_ok:
-        log_fn("STEP PRODUCT 名已被保留,无需重命名")
+        log_fn("AEDT 保留了 STEP PRODUCT 名,无需重命名")
         return obj_names
 
-    # 取体积
+    # ── 从 STEP 取期望的名字列表
+    log_fn(f"AEDT 丢失了 STEP 名字(变成 {obj_names[:1]} ...),从 STEP 文本恢复")
+    step_products = filter_leaf_products(extract_product_geometry(step_path))
+    expected_names = sorted(step_products.keys())
+    expected_crystal = [n for n in expected_names if n == "Crystal"]
+    expected_pplus = sorted(n for n in expected_names if n.startswith("PPlus_"))
+    expected_nplus = sorted(n for n in expected_names if n.startswith("NPlus_"))
+
+    log_fn(f"STEP 中的叶子 PRODUCT: Crystal={expected_crystal}, "
+           f"PPlus={expected_pplus}, NPlus={expected_nplus}")
+
+    if not expected_crystal:
+        raise RuntimeError(
+            "STEP 文件里没有名为 'Crystal' 的 PRODUCT。"
+            "请在 SolidWorks 里把晶体本体零件命名为 'Crystal'(ASCII,无前后缀)。"
+        )
+    if not (expected_pplus or expected_nplus):
+        raise RuntimeError(
+            "STEP 文件里没有 PPlus_NN 或 NPlus_NN 模式的电极零件。"
+        )
+    if len(obj_names) != 1 + len(expected_pplus) + len(expected_nplus):
+        raise RuntimeError(
+            f"AEDT 导入了 {len(obj_names)} 个 body,但 STEP 里只有 "
+            f"{1 + len(expected_pplus) + len(expected_nplus)} 个叶子 PRODUCT。"
+            f"可能 SolidWorks 装配体里有未命名的额外零件。"
+        )
+
+    # ── 按体积排序
     vol_pairs = []
     for name in obj_names:
         try:
@@ -169,32 +204,55 @@ def rename_bodies_by_heuristic(
         except Exception:
             vol = 0.0
         vol_pairs.append((name, vol))
+    vol_pairs.sort(key=lambda t: -t[1])  # 大→小
+    log_fn(f"AEDT body 体积排序: {[(n, round(v, 2)) for n, v in vol_pairs]}")
 
-    if len(vol_pairs) < 3:
-        raise RuntimeError(
-            f"STEP 至少要含 3 个 body(Crystal + 1 P+ + 1 N+),实际 {len(vol_pairs)}"
-        )
-
-    # 体积降序
-    vol_pairs.sort(key=lambda t: -t[1])
-    log_fn(f"按体积排序: {[(n, round(v, 2)) for n, v in vol_pairs]}")
-
-    # 最大 = Crystal
+    # ── 匹配
+    # 体积最大 = Crystal
     crystal_old = vol_pairs[0][0]
     _safe_rename(maxwell, crystal_old, "Crystal", log_fn)
 
-    # 剩余:体积升序,最小是 P+(点电极),其它是 N+
-    others = vol_pairs[1:]
-    others.sort(key=lambda t: t[1])
-    pplus_old = others[0][0]
-    _safe_rename(maxwell, pplus_old, "PPlus_01", log_fn)
+    # 剩余:升序 = (P+ 集合) + (N+ 集合)
+    # 假设:|PPlus| 平均比 |NPlus| 小(点电极物理特征)
+    # 取最小 len(expected_pplus) 个归 P+,其余归 N+
+    rest = sorted(vol_pairs[1:], key=lambda t: t[1])  # 小→大
+    pplus_aedt = rest[: len(expected_pplus)]
+    nplus_aedt = rest[len(expected_pplus):]
 
-    nplus_idx = 1
-    for old_name, _ in others[1:]:
-        _safe_rename(maxwell, old_name, f"NPlus_{nplus_idx:02d}", log_fn)
-        nplus_idx += 1
+    # 歧义检查:P+ 和 N+ 体积带相邻时不可靠
+    if pplus_aedt and nplus_aedt:
+        max_pplus_vol = pplus_aedt[-1][1]
+        min_nplus_vol = nplus_aedt[0][1]
+        if max_pplus_vol > 0.5 * min_nplus_vol:
+            raise RuntimeError(
+                f"无法用体积启发式区分 P+ 和 N+:最大 P+ 体积 = {max_pplus_vol:.2f}, "
+                f"最小 N+ 体积 = {min_nplus_vol:.2f},比值 > 50%。"
+                "请联系开发者实现真几何匹配,或在 SolidWorks 里调整命名/形状。"
+            )
+
+    # 同类内部歧义:P+ 之间体积近似时无法编号
+    for label, group, names in [
+        ("PPlus", pplus_aedt, expected_pplus),
+        ("NPlus", nplus_aedt, expected_nplus),
+    ]:
+        if len(group) > 1:
+            vols = [v for _, v in group]
+            spread = (max(vols) - min(vols)) / max(vols)
+            if spread < 0.05:
+                raise RuntimeError(
+                    f"多个 {label} 电极体积差 < 5%(从 {min(vols):.2f} 到 {max(vols):.2f}),"
+                    f"无法用体积启发式区分 {label}_01/02/...。"
+                    "请用真几何匹配(待实现),或目前用单 {label} 测试。"
+                )
+        # 按 STEP 排序赋名:体积升序对应名字编号升序
+        for (aedt_name, _vol), expected_name in zip(group, names):
+            _safe_rename(maxwell, aedt_name, expected_name, log_fn)
 
     return list(maxwell.modeler.object_names)
+
+
+# 向后兼容别名(老代码可能还在调)
+rename_bodies_by_heuristic = match_step_names_to_bodies
 
 
 def _safe_rename(maxwell, old_name: str, new_name: str, log_fn) -> None:

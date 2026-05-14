@@ -321,9 +321,9 @@ def main(argv: list[str] | None = None) -> int:
         all_obj_names = aedt_ops.import_step(maxwell_real, args.step.resolve())
         log.info(f"导入完成,raw objects = {all_obj_names}")
 
-        # AEDT 可能没保留 STEP PRODUCT 名,用体积启发式重命名
-        all_obj_names = aedt_ops.rename_bodies_by_heuristic(
-            maxwell_real, log_fn=log.info
+        # AEDT 丢了 STEP PRODUCT 名,从 STEP 文本恢复名字 + 体积启发式匹配
+        all_obj_names = aedt_ops.match_step_names_to_bodies(
+            maxwell_real, args.step.resolve(), log_fn=log.info
         )
         log.info(f"重命名后 objects = {all_obj_names}")
 
